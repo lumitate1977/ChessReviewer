@@ -428,10 +428,20 @@ class ChessBoard(tk.Canvas):
         self.board = chess.Board()
         self.move = None
         self.best_move = None
+        self.animations = []
+        self.animation_step = 0
+        self.animation_frames = 14
+        self.animation_job = None
 
         self.draw()
 
     def set_position(self, fen, move=None, best_move=None):
+        if self.animation_job is not None:
+            try:
+                self.after_cancel(self.animation_job)
+            except tk.TclError:
+                pass
+            self.animation_job = None
         old_board = self.board
         target_board = chess.Board(fen)
         self.move = move
