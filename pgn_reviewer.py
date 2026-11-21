@@ -432,103 +432,125 @@ class ChessBoard(tk.Canvas):
         self.draw()
 
     def set_position(self, fen, move=None, best_move=None):
-        self.board = chess.Board(fen)
+        old_board = self.board
+        target_board = chess.Board(fen)
         self.move = move
         self.best_move = best_move
+        self.animations = []
+
+        if move and old_board.piece_at(move.from_square):
+            piece = target_board.piece_at(move.to_square)
+            if piece:
+                self.animations.append(
+                    (old_board.piece_at(move.from_square), move.from_square, move.to_square)
+                )
+
+            # Castling moves the rook too, so animate both pieces.
+            if old_board.is_castling(move):
+                rank = chess.square_rank(move.from_square)
+                if chess.square_file(move.to_square) > chess.square_file(move.from_square):
+                    rook_from = chess.square(7, rank)
+                    rook_to = chess.square(5, rank)
+                else:
+                    rook_from = chess.square(0, rank)
+                    rook_to = chess.square(3, rank)
+                rook_piece = old_board.piece_at(rook_from)
+                if rook_piece:
+                    self.animations.append((rook_piece, rook_from, rook_to))
+
+        self.board = target_board
+        self.animation_step = 0
+        self.animation_frames = 14
+        if self.animations:
+            self.draw()
+            self.animate_step()
+        else:
+            self.draw()
+
+    def animate_step(self):
+        self.animation_step += 1
         self.draw()
+        if self.animation_step < self.animation_frames:
+            self.animation_job = self.after(16, self.animate_step)
+        else:
+            self.animations = []
+            self.draw()
 
     def draw(self):
         self.delete("all")
-
         sq = self.square
-
         light = "#f0d9b5"
         dark = "#b58863"
+        animated_destinations = {item[2] for item in self.animations}
 
         for row in range(8):
             for col in range(8):
-
                 x1 = col * sq
                 y1 = row * sq
                 x2 = x1 + sq
                 y2 = y1 + sq
-
                 square = chess.square(col, 7 - row)
-
                 color = light if (row + col) % 2 == 0 else dark
 
                 if self.move:
                     if square == self.move.from_square:
                         color = "#f6e65c"
-
                     elif square == self.move.to_square:
                         color = "#e5c842"
 
-                self.create_rectangle(
-                    x1, y1, x2, y2,
-                    fill=color,
-                    outline=""
-                )
-
+                self.create_rectangle(x1, y1, x2, y2, fill=color, outline="")
                 piece = self.board.piece_at(square)
 
-                if piece:
-                    symbol = PIECES[piece.symbol()]
-
+                if piece and square not in animated_destinations:
                     self.create_text(
-                        x1 + sq / 2,
-                        y1 + sq / 2,
-                        text=symbol,
+                        x1 + sq / 2, y1 + sq / 2,
+                        text=PIECES[piece.symbol()],
                         font=("Segoe UI Symbol", int(sq * 0.72)),
                         fill="#fffdf4" if piece.color else "#171717"
                     )
 
                 if col == 0:
                     self.create_text(
-                        x1 + 5,
-                        y1 + 5,
-                        anchor="nw",
+                        x1 + 5, y1 + 5, anchor="nw",
                         text=str(8 - row),
-                        font=("Arial", 9, "bold"),
-                        fill="#333333"
+                        font=("Arial", 9, "bold"), fill="#333333"
                     )
-
                 if row == 7:
                     self.create_text(
-                        x2 - 5,
-                        y2 - 5,
-                        anchor="se",
+                        x2 - 5, y2 - 5, anchor="se",
                         text=chess.FILE_NAMES[col],
-                        font=("Arial", 9, "bold"),
-                        fill="#333333"
+                        font=("Arial", 9, "bold"), fill="#333333"
                     )
+
+        # Draw moving pieces between their original and destination squares.
+        if self.animations:
+            progress = min(1.0, self.animation_step / self.animation_frames)
+            # Smooth ease-in/ease-out interpolation.
+            progress = progress * progress * (3 - 2 * progress)
+            for piece, start, end in self.animations:
+                sx = (chess.square_file(start) + 0.5) * sq
+                sy = (7 - chess.square_rank(start) + 0.5) * sq
+                ex = (chess.square_file(end) + 0.5) * sq
+                ey = (7 - chess.square_rank(end) + 0.5) * sq
+                self.create_text(
+                    sx + (ex - sx) * progress,
+                    sy + (ey - sy) * progress,
+                    text=PIECES[piece.symbol()],
+                    font=("Segoe UI Symbol", int(sq * 0.72)),
+                    fill="#fffdf4" if piece.color else "#171717"
+                )
 
         # Blue arrow = Stockfish's recommended move.
         if self.best_move:
             start = self.best_move.from_square
             end = self.best_move.to_square
-
-            x1 = (
-                chess.square_file(start) + 0.5
-            ) * sq
-
-            y1 = (
-                7 - chess.square_rank(start) + 0.5
-            ) * sq
-
-            x2 = (
-                chess.square_file(end) + 0.5
-            ) * sq
-
-            y2 = (
-                7 - chess.square_rank(end) + 0.5
-            ) * sq
-
+            x1 = (chess.square_file(start) + 0.5) * sq
+            y1 = (7 - chess.square_rank(start) + 0.5) * sq
+            x2 = (chess.square_file(end) + 0.5) * sq
+            y2 = (7 - chess.square_rank(end) + 0.5) * sq
             self.create_line(
                 x1, y1, x2, y2,
-                fill="#1688ff",
-                width=6,
-                arrow=tk.LAST,
+                fill="#1688ff", width=6, arrow=tk.LAST,
                 arrowshape=(16, 20, 7)
             )
 
@@ -716,8 +738,30 @@ class PGNReviewer:
             font=("Segoe UI", 13, "bold")
         ).pack(anchor="w", pady=5)
 
-        self.board = ChessBoard(board_frame, 480)
-        self.board.pack(anchor="center")
+        board_display = ttk.Frame(board_frame)
+        board_display.pack(anchor="center")
+
+        self.eval_bar = tk.Canvas(
+            board_display, width=34, height=480,
+            bg="#202020", highlightthickness=0
+        )
+        self.eval_bar.pack(side="left", padx=(0, 8))
+        self.eval_white = 0.5
+        self.eval_text = tk.StringVar(value="0.0")
+        self.board = ChessBoard(board_display, 480)
+        self.board.pack(side="left")
+        self.draw_eval_bar(0.5, "0.0")
+
+        navigation = ttk.Frame(board_frame)
+        navigation.pack(fill="x", pady=(10, 3))
+        self.previous_button = ttk.Button(
+            navigation, text="◀ Previous", command=self.previous_move
+        )
+        self.previous_button.pack(side="left", expand=True, fill="x", padx=(0, 4))
+        self.next_button = ttk.Button(
+            navigation, text="Next ▶", command=self.next_move
+        )
+        self.next_button.pack(side="left", expand=True, fill="x", padx=(4, 0))
 
         self.position_label = tk.StringVar(
             value="Select a move to see its position."
@@ -875,6 +919,56 @@ class PGNReviewer:
             ),
             foreground="#777777"
         ).pack(anchor="w", pady=4)
+
+    def draw_eval_bar(self, white_expected, score_text):
+        """Draw a vertical advantage bar from White's perspective."""
+        self.eval_bar.delete("all")
+        height = 480
+        white_expected = max(0.0, min(1.0, white_expected))
+        black_height = height * (1.0 - white_expected)
+        self.eval_bar.create_rectangle(
+            0, 0, 34, black_height, fill="#30343b", outline=""
+        )
+        self.eval_bar.create_rectangle(
+            0, black_height, 34, height, fill="#f4f4f4", outline=""
+        )
+        self.eval_bar.create_text(
+            17, 12, text="B", fill="#ffffff",
+            font=("Segoe UI", 9, "bold")
+        )
+        self.eval_bar.create_text(
+            17, height - 12, text="W", fill="#222222",
+            font=("Segoe UI", 9, "bold")
+        )
+        self.eval_bar.create_rectangle(
+            0, black_height - 1, 34, black_height + 1,
+            fill="#d6b15e", outline=""
+        )
+        self.eval_text.set(score_text)
+
+    def previous_move(self):
+        selection = self.results.selection()
+        if not selection:
+            return
+        index = int(selection[0])
+        if index > 0:
+            target = str(index - 1)
+            self.results.selection_set(target)
+            self.results.focus(target)
+            self.results.see(target)
+            self.select_move()
+
+    def next_move(self):
+        selection = self.results.selection()
+        if not selection:
+            return
+        index = int(selection[0])
+        if index + 1 < len(self.rows):
+            target = str(index + 1)
+            self.results.selection_set(target)
+            self.results.focus(target)
+            self.results.see(target)
+            self.select_move()
 
     # --------------------------------------------------------
     # FILE AND ENGINE CONTROLS
@@ -1215,6 +1309,10 @@ class PGNReviewer:
                         "best_san": best_san,
                         "before_expected": before_expected,
                         "after_expected": after_expected,
+                        "white_expected": (
+                            after_expected if color == chess.WHITE
+                            else 1.0 - after_expected
+                        ),
                         "best_expected": best_expected,
                     })
 
@@ -1401,14 +1499,18 @@ class PGNReviewer:
             foreground=class_foregrounds.get(row["label"], "#ffffff")
         )
 
+        move = chess.Move.from_uci(row["move_uci"])
+        position_after = chess.Board(row["fen"])
+        position_after.push(move)
         self.board.set_position(
-            row["fen"],
-            chess.Move.from_uci(
-                row["move_uci"]
-            ),
-            chess.Move.from_uci(
-                row["best_uci"]
-            ) if row["best_uci"] else None
+            position_after.fen(),
+            move,
+            chess.Move.from_uci(row["best_uci"])
+            if row["best_uci"] else None
+        )
+        self.draw_eval_bar(
+            row.get("white_expected", 0.5),
+            row["eval"]
         )
 
         self.position_label.set(
