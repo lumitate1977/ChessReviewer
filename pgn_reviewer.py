@@ -945,10 +945,11 @@ class PGNReviewer:
         ).pack(anchor="w", pady=4)
 
     def draw_eval_bar(self, white_expected, score_text):
-        """Animate the evaluation bar smoothly to White's new expected score."""
+        """Animate the evaluation marker smoothly to the new position."""
         target = max(0.0, min(1.0, float(white_expected)))
 
-        # Stop an in-progress animation so rapid move selection stays responsive.
+        # Cancel any previous animation, but preserve the currently displayed
+        # value so a quick sequence of selections never causes a jump.
         if getattr(self, "eval_animation_job", None) is not None:
             try:
                 self.root.after_cancel(self.eval_animation_job)
@@ -957,27 +958,39 @@ class PGNReviewer:
             self.eval_animation_job = None
 
         start = getattr(self, "eval_white", 0.5)
-        self.eval_white = target
         self.eval_text.set(score_text)
-
-        # Animate the bar position rather than jumping directly to the new value.
         self.eval_animation_start = start
         self.eval_animation_target = target
         self.eval_animation_step = 0
-        self.eval_animation_frames = 16
+        self.eval_animation_frames = 30
+
+        # Avoid animating the initial centered bar when the interface opens.
+        if not hasattr(self, "eval_bar_initialized"):
+            self.eval_bar_initialized = True
+            self.eval_white = target
+            self._render_eval_bar(target)
+            return
+
+        if abs(target - start) < 0.002:
+            self.eval_white = target
+            self._render_eval_bar(target)
+            return
+
         self._animate_eval_bar()
 
     def _animate_eval_bar(self):
         self.eval_animation_step += 1
         progress = min(1.0, self.eval_animation_step / self.eval_animation_frames)
 
-        # Smooth ease-in/ease-out movement.
+        # Smooth ease-in/ease-out over approximately half a second.
         eased = progress * progress * (3.0 - 2.0 * progress)
         value = (
             self.eval_animation_start
             + (self.eval_animation_target - self.eval_animation_start) * eased
         )
 
+        # Keep the live value so an interrupted animation resumes from here.
+        self.eval_white = value
         self._render_eval_bar(value)
 
         if self.eval_animation_step < self.eval_animation_frames:
