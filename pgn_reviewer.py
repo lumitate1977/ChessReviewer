@@ -286,6 +286,22 @@ def detect_brilliant(
     captured_position = board_after.copy()
     captured_position.push(best_reply)
 
+    # Check the actual material result of the entire sequence:
+    # our move followed by the opponent accepting the offered piece.
+    # A piece being captured is NOT automatically a sacrifice. For
+    # example, Nxb8 Qxb8 wins a rook for a knight (+2), while
+    # Rxh8 Kxh8 is only an equal rook trade (0).
+    material_swing = (
+        material_difference(captured_position, mover)
+        - material_difference(board_before, mover)
+    )
+
+    # Require a meaningful net material investment. This rejects
+    # ordinary exchanges and captures that win more material than
+    # the sacrificed piece is worth.
+    if material_swing > -1.5:
+        return False
+
     try:
         captured_info = engine.analyse(
             captured_position,
