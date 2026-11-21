@@ -39,16 +39,18 @@ PIECES = {
     "b": "♝", "n": "♞", "p": "♟",
 }
 
+# Chess.com-inspired move classification palette.
+# Chess.com does not publish official HEX values; these are close visual matches.
 COLORS = {
-    "BRILLIANT": "#159447",
-    "GREAT": "#13a0a0",
-    "BEST": "#239447",
-    "EXCELLENT": "#398bd1",
-    "GOOD": "#888888",
-    "INACCURACY": "#d49b16",
-    "MISTAKE": "#e47724",
-    "BLUNDER": "#d32f2f",
-    "MISS": "#bd55bd",
+    "BRILLIANT": "#1BAAA0",   # Teal
+    "GREAT": "#5B9BD5",       # Blue
+    "BEST": "#5C8A3C",        # Dark green
+    "EXCELLENT": "#96BC4B",   # Lime green
+    "GOOD": "#A8C47A",        # Light green
+    "INACCURACY": "#F0C15A",  # Yellow
+    "MISTAKE": "#E58C2A",     # Orange
+    "BLUNDER": "#C03030",     # Red
+    "MISS": "#C77BD4",        # Pink / purple
 }
 
 
@@ -898,16 +900,18 @@ class PGNReviewer:
         )
 
         # Soft colored rows make important classifications visible at a glance.
+        # Dark tinted row backgrounds with the corresponding Chess.com-style
+        # classification color as the text/accent.
         row_colors = {
-            "BRILLIANT": ("#123f32", "#63e6a4"),
-            "GREAT": ("#123d45", "#65dce8"),
-            "BEST": ("#183d2c", "#8be0a7"),
-            "EXCELLENT": ("#1b3853", "#8fc8ff"),
-            "GOOD": ("#303943", "#d5dde5"),
-            "INACCURACY": ("#493b1b", "#f5d36b"),
-            "MISTAKE": ("#4b2d1e", "#ffad72"),
-            "BLUNDER": ("#4a2025", "#ff8b94"),
-            "MISS": ("#42264b", "#e6a4f2"),
+            "BRILLIANT": ("#173B39", COLORS["BRILLIANT"]),
+            "GREAT": ("#1D354B", COLORS["GREAT"]),
+            "BEST": ("#293A24", COLORS["BEST"]),
+            "EXCELLENT": ("#354321", COLORS["EXCELLENT"]),
+            "GOOD": ("#394332", COLORS["GOOD"]),
+            "INACCURACY": ("#493D22", COLORS["INACCURACY"]),
+            "MISTAKE": ("#4B3420", COLORS["MISTAKE"]),
+            "BLUNDER": ("#492326", COLORS["BLUNDER"]),
+            "MISS": ("#432B49", COLORS["MISS"]),
         }
         for label, (background, foreground) in row_colors.items():
             self.results.tag_configure(
@@ -1504,17 +1508,7 @@ class PGNReviewer:
         )
         self.selected_classification.set(row["label"])
 
-        class_foregrounds = {
-            "BRILLIANT": "#63e6a4",
-            "GREAT": "#65dce8",
-            "BEST": "#8be0a7",
-            "EXCELLENT": "#8fc8ff",
-            "GOOD": "#d5dde5",
-            "INACCURACY": "#f5d36b",
-            "MISTAKE": "#ffad72",
-            "BLUNDER": "#ff8b94",
-            "MISS": "#e6a4f2",
-        }
+        class_foregrounds = COLORS
         self.style.configure(
             "MoveClass.TLabel",
             foreground=class_foregrounds.get(row["label"], "#ffffff")
