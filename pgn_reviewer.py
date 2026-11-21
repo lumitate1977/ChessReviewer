@@ -945,11 +945,55 @@ class PGNReviewer:
         ).pack(anchor="w", pady=4)
 
     def draw_eval_bar(self, white_expected, score_text):
-        """Draw a vertical advantage bar from White's perspective."""
+        """Animate the evaluation bar smoothly to White's new expected score."""
+        target = max(0.0, min(1.0, float(white_expected)))
+
+        # Stop an in-progress animation so rapid move selection stays responsive.
+        if getattr(self, "eval_animation_job", None) is not None:
+            try:
+                self.root.after_cancel(self.eval_animation_job)
+            except tk.TclError:
+                pass
+            self.eval_animation_job = None
+
+        start = getattr(self, "eval_white", 0.5)
+        self.eval_white = target
+        self.eval_text.set(score_text)
+
+        # Animate the bar position rather than jumping directly to the new value.
+        self.eval_animation_start = start
+        self.eval_animation_target = target
+        self.eval_animation_step = 0
+        self.eval_animation_frames = 16
+        self._animate_eval_bar()
+
+    def _animate_eval_bar(self):
+        self.eval_animation_step += 1
+        progress = min(1.0, self.eval_animation_step / self.eval_animation_frames)
+
+        # Smooth ease-in/ease-out movement.
+        eased = progress * progress * (3.0 - 2.0 * progress)
+        value = (
+            self.eval_animation_start
+            + (self.eval_animation_target - self.eval_animation_start) * eased
+        )
+
+        self._render_eval_bar(value)
+
+        if self.eval_animation_step < self.eval_animation_frames:
+            self.eval_animation_job = self.root.after(16, self._animate_eval_bar)
+        else:
+            self.eval_animation_job = None
+            self.eval_white = self.eval_animation_target
+            self._render_eval_bar(self.eval_white)
+
+    def _render_eval_bar(self, white_expected):
+        """Render one frame of the vertical evaluation bar."""
         self.eval_bar.delete("all")
         height = 480
         white_expected = max(0.0, min(1.0, white_expected))
         black_height = height * (1.0 - white_expected)
+
         self.eval_bar.create_rectangle(
             0, 0, 34, black_height, fill="#30343b", outline=""
         )
@@ -968,7 +1012,6 @@ class PGNReviewer:
             0, black_height - 1, 34, black_height + 1,
             fill="#d6b15e", outline=""
         )
-        self.eval_text.set(score_text)
 
     def previous_move(self):
         selection = self.results.selection()
