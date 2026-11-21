@@ -205,18 +205,24 @@ def detect_brilliant(
     best_move,
     before_score,
     after_score,
-    mover
+    mover,
+    depth
 ):
     """
-    Conservative Brilliant estimate.
+    Strict Brilliant-move heuristic.
 
-    Looks for a strong non-pawn move that offers a piece for
-    capture while retaining a good evaluation.
+    Only considers a move when:
+    - It is Stockfish's top move.
+    - A non-pawn piece worth at least a minor piece is genuinely offered.
+    - The opponent's best reply actually captures that piece.
+    - The resulting position is still clearly sound for the sacrificing side.
 
-    This is not Chess.com's official Brilliant algorithm.
+    This intentionally prefers false negatives over false positives.
+    It is an approximation, not Chess.com's proprietary classifier.
     """
 
-    if best_move != move:
+    # A Brilliant candidate must also be Stockfish's top choice.
+    if best_move is None or best_move != move:
         return False
 
     if board_before.legal_moves.count() <= 1:
@@ -224,47 +230,84 @@ def detect_brilliant(
 
     piece = board_before.piece_at(move.from_square)
 
-    if piece is None or piece.piece_type == chess.PAWN:
+    # Pawn moves and trivial king moves are not treated as piece sacrifices.
+    if piece is None or piece.piece_type not in (
+        chess.KNIGHT,
+        chess.BISHOP,
+        chess.ROOK,
+        chess.QUEEN
+    ):
         return False
 
+    # Avoid labeling moves in positions that are already comfortably won.
     before_expected = expected_points_from_cp(before_score)
     after_expected = expected_points_from_cp(after_score)
 
-    if before_expected - after_expected > 0.02:
+    if before_expected >= 0.90:
         return False
 
-    # Avoid calling an ordinary move Brilliant when the player
-    # already had an overwhelmingly winning position.
-    if before_expected > 0.90:
+    # The move itself must not noticeably worsen the evaluation.
+    if before_expected - after_expected > 0.015:
         return False
 
-    if not is_capture_of_moved_piece(board_after, move):
+    # The moved piece must be legally capturable on its destination square.
+    possible_captures = [
+        reply for reply in board_after.legal_moves
+        if reply.to_square == move.to_square
+        and board_after.is_capture(reply)
+    ]
+
+    if not possible_captures:
         return False
 
-    # Check the evaluation if the opponent captures the offered piece.
-    for reply in board_after.legal_moves:
-        if reply.to_square != move.to_square:
-            continue
-
-        if not board_after.is_capture(reply):
-            continue
-
-        captured_position = board_after.copy()
-        captured_position.push(reply)
-
-        info = engine.analyse(
-            captured_position,
-            chess.engine.Limit(depth=max(10, DEFAULT_DEPTH - 2))
+    # Do not call it Brilliant if the opponent has a better reply that
+    # does not take the offered piece. The top engine PV must capture it.
+    try:
+        opponent_info = engine.analyse(
+            board_after,
+            chess.engine.Limit(depth=max(10, depth))
         )
+    except (chess.engine.EngineError, chess.engine.EngineTerminatedError):
+        return False
 
-        captured_score = score_cp(info["score"], mover)
-        captured_expected = expected_points_from_cp(captured_score)
+    opponent_pv = opponent_info.get("pv") or []
+    if not opponent_pv:
+        return False
 
-        # The sacrifice must leave the player with a reasonable position.
-        if captured_expected >= 0.40:
-            return True
+    best_reply = opponent_pv[0]
 
-    return False
+    if (
+        best_reply.to_square != move.to_square
+        or not board_after.is_capture(best_reply)
+    ):
+        return False
+
+    # Evaluate the position after the opponent accepts the sacrifice.
+    captured_position = board_after.copy()
+    captured_position.push(best_reply)
+
+    try:
+        captured_info = engine.analyse(
+            captured_position,
+            chess.engine.Limit(depth=max(10, depth))
+        )
+    except (chess.engine.EngineError, chess.engine.EngineTerminatedError):
+        return False
+
+    captured_score = score_cp(captured_info["score"], mover)
+    captured_expected = expected_points_from_cp(captured_score)
+
+    # The sacrifice must leave a genuinely playable, preferably favorable
+    # position even after the opponent takes the offered piece.
+    if captured_expected < 0.58:
+        return False
+
+    # Also reject sacrifices where accepting the piece causes a substantial
+    # drop relative to the position immediately after the move.
+    if after_expected - captured_expected > 0.12:
+        return False
+
+    return True
 
 
 def detect_great(
@@ -1020,7 +1063,8 @@ class PGNReviewer:
                             best_move,
                             before_score,
                             after_score,
-                            color
+                            color,
+                            depth
                         )
 
                         if not brilliant:
