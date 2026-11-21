@@ -435,7 +435,7 @@ class ChessBoard(tk.Canvas):
 
         self.draw()
 
-    def set_position(self, fen, move=None, best_move=None):
+    def set_position(self, fen, move=None, best_move=None, animation_move=None, reverse=False):
         if self.animation_job is not None:
             try:
                 self.after_cancel(self.animation_job)
@@ -448,22 +448,31 @@ class ChessBoard(tk.Canvas):
         self.best_move = best_move
         self.animations = []
 
-        if move and old_board.piece_at(move.from_square):
-            piece = target_board.piece_at(move.to_square)
-            if piece:
-                self.animations.append(
-                    (old_board.piece_at(move.from_square), move.from_square, move.to_square)
-                )
+        animation_move = animation_move or move
+        if animation_move:
+            moving_from = animation_move.to_square if reverse else animation_move.from_square
+            moving_to = animation_move.from_square if reverse else animation_move.to_square
+            moving_piece = old_board.piece_at(moving_from)
+            if moving_piece:
+                self.animations.append((moving_piece, moving_from, moving_to))
 
-            # Castling moves the rook too, so animate both pieces.
-            if old_board.is_castling(move):
-                rank = chess.square_rank(move.from_square)
-                if chess.square_file(move.to_square) > chess.square_file(move.from_square):
-                    rook_from = chess.square(7, rank)
-                    rook_to = chess.square(5, rank)
+            # Animate the rook in either direction when castling.
+            if (
+                moving_piece
+                and moving_piece.piece_type == chess.KING
+                and abs(
+                    chess.square_file(animation_move.to_square)
+                    - chess.square_file(animation_move.from_square)
+                ) == 2
+            ):
+                rank = chess.square_rank(animation_move.from_square)
+                kingside = chess.square_file(animation_move.to_square) > chess.square_file(animation_move.from_square)
+                if reverse:
+                    rook_from = chess.square(5 if kingside else 3, rank)
+                    rook_to = chess.square(7 if kingside else 0, rank)
                 else:
-                    rook_from = chess.square(0, rank)
-                    rook_to = chess.square(3, rank)
+                    rook_from = chess.square(7 if kingside else 0, rank)
+                    rook_to = chess.square(5 if kingside else 3, rank)
                 rook_piece = old_board.piece_at(rook_from)
                 if rook_piece:
                     self.animations.append((rook_piece, rook_from, rook_to))
@@ -617,6 +626,7 @@ class PGNReviewer:
         self.busy = False
         self.rows = []
         self.last_report = None
+        self.current_selected_index = None
 
         self.build_ui()
 
@@ -1074,6 +1084,7 @@ class PGNReviewer:
 
         self.rows = []
         self.last_report = None
+        self.current_selected_index = None
 
         threading.Thread(
             target=self.review_worker,
@@ -1512,12 +1523,26 @@ class PGNReviewer:
         move = chess.Move.from_uci(row["move_uci"])
         position_after = chess.Board(row["fen"])
         position_after.push(move)
+
+        # When stepping to the previous row, animate the move being undone.
+        reverse = (
+            self.current_selected_index is not None
+            and index == self.current_selected_index - 1
+            and self.rows[self.current_selected_index]["game"] == row["game"]
+        )
+        animation_move = (
+            chess.Move.from_uci(self.rows[self.current_selected_index]["move_uci"])
+            if reverse else move
+        )
         self.board.set_position(
             position_after.fen(),
             move,
             chess.Move.from_uci(row["best_uci"])
-            if row["best_uci"] else None
+            if row["best_uci"] else None,
+            animation_move=animation_move,
+            reverse=reverse
         )
+        self.current_selected_index = index
         self.draw_eval_bar(
             row.get("white_expected", 0.5),
             row["eval"]
