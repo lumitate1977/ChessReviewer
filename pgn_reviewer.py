@@ -546,6 +546,41 @@ class PGNReviewer:
         self.root.geometry("1500x920")
         self.root.minsize(1100, 720)
 
+        # A cleaner, dark analysis-room look inspired by Chess.com.
+        self.style = ttk.Style()
+        try:
+            self.style.theme_use("clam")
+        except tk.TclError:
+            pass
+        self.style.configure(
+            "Treeview",
+            font=("Segoe UI", 10),
+            rowheight=32,
+            background="#202b36",
+            fieldbackground="#202b36",
+            foreground="#e8edf2",
+            borderwidth=0
+        )
+        self.style.configure(
+            "Treeview.Heading",
+            font=("Segoe UI", 10, "bold"),
+            background="#17212b",
+            foreground="#e8edf2",
+            padding=(8, 9)
+        )
+        self.style.map(
+            "Treeview",
+            background=[("selected", "#315b83")],
+            foreground=[("selected", "#ffffff")]
+        )
+        self.style.configure(
+            "MoveClass.TLabel",
+            font=("Segoe UI", 15, "bold"),
+            padding=(10, 7),
+            background="#263442",
+            foreground="#ffffff"
+        )
+
         self.engine_path = find_engine()
         self.busy = False
         self.rows = []
@@ -692,7 +727,25 @@ class PGNReviewer:
             board_frame,
             textvariable=self.position_label,
             wraplength=460
-        ).pack(anchor="w", pady=8)
+        ).pack(anchor="w", pady=(8, 3))
+
+        self.selected_move_title = tk.StringVar(
+            value="Select a move from the review"
+        )
+        ttk.Label(
+            board_frame,
+            textvariable=self.selected_move_title,
+            font=("Segoe UI", 17, "bold")
+        ).pack(anchor="w", pady=(2, 5))
+
+        self.selected_classification = tk.StringVar(value="")
+
+        self.classification_badge = ttk.Label(
+            board_frame,
+            textvariable=self.selected_classification,
+            style="MoveClass.TLabel"
+        )
+        self.classification_badge.pack(anchor="w", pady=(0, 8))
 
         self.recommendation = tk.StringVar(value="")
 
@@ -723,7 +776,8 @@ class PGNReviewer:
             moves_frame,
             columns=columns,
             show="headings",
-            height=22
+            height=22,
+            style="Treeview"
         )
 
         headings = {
@@ -737,13 +791,13 @@ class PGNReviewer:
         }
 
         widths = {
-            "move": 75,
+            "move": 82,
             "side": 75,
-            "played": 75,
-            "classification": 110,
+            "played": 85,
+            "classification": 125,
             "eval": 75,
-            "loss": 75,
-            "best": 85
+            "loss": 78,
+            "best": 90
         }
 
         for col in columns:
@@ -779,10 +833,23 @@ class PGNReviewer:
             fill="y"
         )
 
-        for label, color in COLORS.items():
+        # Soft colored rows make important classifications visible at a glance.
+        row_colors = {
+            "BRILLIANT": ("#123f32", "#63e6a4"),
+            "GREAT": ("#123d45", "#65dce8"),
+            "BEST": ("#183d2c", "#8be0a7"),
+            "EXCELLENT": ("#1b3853", "#8fc8ff"),
+            "GOOD": ("#303943", "#d5dde5"),
+            "INACCURACY": ("#493b1b", "#f5d36b"),
+            "MISTAKE": ("#4b2d1e", "#ffad72"),
+            "BLUNDER": ("#4a2025", "#ff8b94"),
+            "MISS": ("#42264b", "#e6a4f2"),
+        }
+        for label, (background, foreground) in row_colors.items():
             self.results.tag_configure(
                 label,
-                foreground=color
+                background=background,
+                foreground=foreground
             )
 
         self.results.bind(
@@ -1305,6 +1372,34 @@ class PGNReviewer:
             return
 
         row = self.rows[index]
+
+        # Put the exact move and its classification in a large, obvious
+        # summary so users do not have to infer which row the label belongs to.
+        move_number_text = (
+            f"{row['move_number']}."
+            if row["player"] == "White"
+            else f"{row['move_number']}..."
+        )
+        self.selected_move_title.set(
+            f"{move_number_text} {row['san']}  ·  {row['player']}"
+        )
+        self.selected_classification.set(row["label"])
+
+        class_foregrounds = {
+            "BRILLIANT": "#63e6a4",
+            "GREAT": "#65dce8",
+            "BEST": "#8be0a7",
+            "EXCELLENT": "#8fc8ff",
+            "GOOD": "#d5dde5",
+            "INACCURACY": "#f5d36b",
+            "MISTAKE": "#ffad72",
+            "BLUNDER": "#ff8b94",
+            "MISS": "#e6a4f2",
+        }
+        self.style.configure(
+            "MoveClass.TLabel",
+            foreground=class_foregrounds.get(row["label"], "#ffffff")
+        )
 
         self.board.set_position(
             row["fen"],
