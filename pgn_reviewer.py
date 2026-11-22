@@ -162,6 +162,53 @@ def get_rating(game, header, fallback=DEFAULT_RATING):
     return fallback
 
 
+def calculate_performance_rating(games, player_color):
+    """
+    Estimate a match performance rating from the PGN result and opponents'
+    published ratings. This is a conventional result-based estimate, not an
+    engine-derived rating or an official FIDE tournament rating.
+    """
+    scores = []
+    opponent_ratings = []
+
+    for game in games:
+        result = game.headers.get("Result", "*")
+        white_rating = get_rating(game, "WhiteElo", fallback=None)
+        black_rating = get_rating(game, "BlackElo", fallback=None)
+
+        opponent_rating = (
+            black_rating if player_color == chess.WHITE else white_rating
+        )
+        if opponent_rating is None or result not in ("1-0", "0-1", "1/2-1/2"):
+            continue
+
+        if result == "1/2-1/2":
+            score = 0.5
+        elif (result == "1-0") == (player_color == chess.WHITE):
+            score = 1.0
+        else:
+            score = 0.0
+
+        scores.append(score)
+        opponent_ratings.append(opponent_rating)
+
+    if not scores:
+        return None, 0
+
+    average_opponent = sum(opponent_ratings) / len(opponent_ratings)
+
+    if len(scores) == 1:
+        # A single-game performance estimate is necessarily very volatile.
+        adjustment = 400 if scores[0] == 1.0 else -400 if scores[0] == 0.0 else 0
+    else:
+        percentage = sum(scores) / len(scores)
+        # Bound extreme results so the estimate remains finite and readable.
+        percentage = max(0.01, min(0.99, percentage))
+        adjustment = round(400 * math.log10(percentage / (1.0 - percentage)))
+
+    return round(average_opponent + adjustment), len(scores)
+
+
 def material(board, color):
     total = 0
 
@@ -926,6 +973,7 @@ class PGNReviewer:
         )
 
         self.summary = tk.StringVar(value="")
+        self.performance_summary = tk.StringVar(value="")
 
         ttk.Label(
             outer,
@@ -933,6 +981,14 @@ class PGNReviewer:
             font=("Segoe UI", 10, "bold"),
             wraplength=1350
         ).pack(anchor="w")
+
+        ttk.Label(
+            outer,
+            textvariable=self.performance_summary,
+            font=("Segoe UI", 11, "bold"),
+            foreground="#1BAAA0",
+            wraplength=1350
+        ).pack(anchor="w", pady=(3, 0))
 
         ttk.Label(
             outer,
@@ -1140,6 +1196,7 @@ class PGNReviewer:
         )
 
         self.summary.set("")
+        self.performance_summary.set("")
         self.progress["value"] = 0
 
         self.rows = []
@@ -1415,12 +1472,23 @@ class PGNReviewer:
             engine.quit()
             engine = None
 
+            white_performance, white_games = calculate_performance_rating(
+                games, chess.WHITE
+            )
+            black_performance, black_games = calculate_performance_rating(
+                games, chess.BLACK
+            )
+
             self.root.after(
                 0,
                 self.show_results,
                 rows,
                 counts,
-                len(games)
+                len(games),
+                white_performance,
+                white_games,
+                black_performance,
+                black_games
             )
 
         except Exception as e:
@@ -1464,7 +1532,11 @@ class PGNReviewer:
         self,
         rows,
         counts,
-        game_count
+        game_count,
+        white_performance=None,
+        white_games=0,
+        black_performance=None,
+        black_games=0
     ):
 
         self.rows = rows
@@ -1517,6 +1589,18 @@ class PGNReviewer:
             f"{game_count} game(s). "
             + summary
         )
+
+        if white_performance is not None and black_performance is not None:
+            self.performance_summary.set(
+                f"Estimated match performance — "
+                f"White: {white_performance} Elo ({white_games} rated game(s))"
+                f"  |  Black: {black_performance} Elo ({black_games} rated game(s))"
+            )
+        else:
+            self.performance_summary.set(
+                "Estimated match Elo unavailable — PGN needs player ratings "
+                "and a completed result (1-0, 0-1, or 1/2-1/2)."
+            )
 
         self.status.set("Review complete.")
 
@@ -1678,7 +1762,16 @@ class PGNReviewer:
 
             f.write(
                 "Classification method: "
-                "Chess.com-style expected-points approximation\n\n"
+                "Chess.com-style expected-points approximation\n"
+            )
+
+            white_performance, white_games = calculate_performance_rating(
+                [game for game in []], chess.WHITE
+            )
+            f.write(
+                "Match performance Elo is shown in the app when PGN ratings "
+                "and result are available. It is a result-based estimate, "
+                "not an engine-derived playing-strength rating.\n\n"
             )
 
             for row in rows:
