@@ -1610,7 +1610,11 @@ class PGNReviewer:
         self.last_report = (
             rows,
             counts,
-            game_count
+            game_count,
+            white_performance,
+            white_games,
+            black_performance,
+            black_games
         )
 
         if rows:
@@ -1746,7 +1750,15 @@ class PGNReviewer:
         if not path:
             return
 
-        rows, counts, game_count = self.last_report
+        (
+            rows,
+            counts,
+            game_count,
+            white_performance,
+            white_games,
+            black_performance,
+            black_games
+        ) = self.last_report
 
         with open(
             path,
@@ -1765,13 +1777,20 @@ class PGNReviewer:
                 "Chess.com-style expected-points approximation\n"
             )
 
-            white_performance, white_games = calculate_performance_rating(
-                [game for game in []], chess.WHITE
-            )
+            if white_performance is not None and black_performance is not None:
+                f.write(
+                    f"Estimated match performance — White: {white_performance} Elo "
+                    f"({white_games} rated game(s)); Black: {black_performance} Elo "
+                    f"({black_games} rated game(s)).\n"
+                )
+            else:
+                f.write(
+                    "Estimated match performance Elo unavailable: PGN player "
+                    "ratings and a completed result are required.\n"
+                )
             f.write(
-                "Match performance Elo is shown in the app when PGN ratings "
-                "and result are available. It is a result-based estimate, "
-                "not an engine-derived playing-strength rating.\n\n"
+                "This is a result-based estimate, not an engine-derived "
+                "playing-strength rating.\n\n"
             )
 
             for row in rows:
