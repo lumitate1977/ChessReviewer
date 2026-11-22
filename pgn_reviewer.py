@@ -975,15 +975,20 @@ class PGNReviewer:
         self.summary = tk.StringVar(value="")
         self.performance_summary = tk.StringVar(value="")
 
+        # Keep these results above the expanding board/table pane so they
+        # remain visible instead of being pushed below the window.
+        summary_panel = ttk.Frame(outer, padding=(4, 5))
+        summary_panel.pack(fill="x", before=main)
+
         ttk.Label(
-            outer,
+            summary_panel,
             textvariable=self.summary,
             font=("Segoe UI", 10, "bold"),
             wraplength=1350
         ).pack(anchor="w")
 
         ttk.Label(
-            outer,
+            summary_panel,
             textvariable=self.performance_summary,
             font=("Segoe UI", 11, "bold"),
             foreground="#1BAAA0",
@@ -991,11 +996,10 @@ class PGNReviewer:
         ).pack(anchor="w", pady=(3, 0))
 
         ttk.Label(
-            outer,
+            summary_panel,
             text=(
-                "Chess.com-style estimates. "
-                "The expected-points formula and special-move "
-                "detection are approximations."
+                "The match-performance estimate currently uses PGN ratings "
+                "and results; it is not an estimate from move quality."
             ),
             foreground="#777777"
         ).pack(anchor="w", pady=4)
