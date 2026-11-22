@@ -182,7 +182,7 @@ def calculate_game_strengths(rows):
             if row.get("player") == player and not row.get("forced", False)
         ]
         if len(player_rows) < 8:
-            return None, len(player_rows), None, None, 0, None, None
+            return None, len(player_rows), None, 0, None, None
 
         losses = [
             max(0.0, float(row.get("quality_loss", 0.0)))
@@ -1811,10 +1811,10 @@ class PGNReviewer:
             )
 
             f.write(
-                f"Estimated game strength — White: {white_performance} Elo; "
+                f"Estimated performance (experimental) — White: {white_performance} Elo; "
                 f"Black: {black_performance} Elo.\n"
-                "This is a rough engine-based estimate, not Chess.com's "
-                "proprietary Game Rating formula.\n\n"
+                "Uses both PGN starting ratings and relative Stockfish move quality. "
+                "It is not Chess.com's proprietary Game Rating formula.\n\n"
             )
 
             for row in rows:
