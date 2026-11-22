@@ -162,51 +162,60 @@ def get_rating(game, header, fallback=DEFAULT_RATING):
     return fallback
 
 
-def calculate_performance_rating(games, player_color):
+def calculate_game_strength(rows, player):
     """
-    Estimate a match performance rating from the PGN result and opponents'
-    published ratings. This is a conventional result-based estimate, not an
-    engine-derived rating or an official FIDE tournament rating.
+    Estimate the strength demonstrated in this game from engine move quality.
+    This deliberately does not use the result or opponent rating.
+
+    The EP-loss bands are a rough local calibration, not Chess.com's formula.
+    We blend the engine-derived band with the player's PGN rating so one game
+    does not completely overwrite their established rating.
     """
-    scores = []
-    opponent_ratings = []
+    player_rows = [
+        row for row in rows
+        if row.get("player") == player and not row.get("forced", False)
+    ]
+    if len(player_rows) < 8:
+        return None, len(player_rows), None
 
-    for game in games:
-        result = game.headers.get("Result", "*")
-        white_rating = get_rating(game, "WhiteElo", fallback=None)
-        black_rating = get_rating(game, "BlackElo", fallback=None)
+    average_loss = sum(
+        row.get("quality_loss", 0.0) for row in player_rows
+    ) / len(player_rows)
 
-        opponent_rating = (
-            black_rating if player_color == chess.WHITE else white_rating
-        )
-        if opponent_rating is None or result not in ("1-0", "0-1", "1/2-1/2"):
-            continue
-
-        if result == "1/2-1/2":
-            score = 0.5
-        elif (result == "1-0") == (player_color == chess.WHITE):
-            score = 1.0
-        else:
-            score = 0.0
-
-        scores.append(score)
-        opponent_ratings.append(opponent_rating)
-
-    if not scores:
-        return None, 0
-
-    average_opponent = sum(opponent_ratings) / len(opponent_ratings)
-
-    if len(scores) == 1:
-        # A single-game performance estimate is necessarily very volatile.
-        adjustment = 400 if scores[0] == 1.0 else -400 if scores[0] == 0.0 else 0
+    # Approximate game-strength bands from average expected-points lost
+    # against Stockfish's top move. EP loss is position-dependent, so these
+    # bands are intentionally broad rather than claiming exact Elo precision.
+    if average_loss <= 0.003:
+        engine_band = 2300
+    elif average_loss <= 0.008:
+        engine_band = 2100
+    elif average_loss <= 0.015:
+        engine_band = 1900
+    elif average_loss <= 0.025:
+        engine_band = 1750
+    elif average_loss <= 0.040:
+        engine_band = 1600
+    elif average_loss <= 0.060:
+        engine_band = 1450
+    elif average_loss <= 0.085:
+        engine_band = 1300
+    elif average_loss <= 0.115:
+        engine_band = 1150
+    elif average_loss <= 0.155:
+        engine_band = 1000
+    elif average_loss <= 0.210:
+        engine_band = 850
     else:
-        percentage = sum(scores) / len(scores)
-        # Bound extreme results so the estimate remains finite and readable.
-        percentage = max(0.01, min(0.99, percentage))
-        adjustment = round(400 * math.log10(percentage / (1.0 - percentage)))
+        engine_band = 700
 
-    return round(average_opponent + adjustment), len(scores)
+    # Use the player's rating as a stabilizing prior, not as the result.
+    ratings = [
+        row.get("rating") for row in player_rows
+        if isinstance(row.get("rating"), int) and 100 <= row["rating"] <= 4000
+    ]
+    base_rating = round(sum(ratings) / len(ratings)) if ratings else 1200
+    estimate = round(0.75 * engine_band + 0.25 * base_rating)
+    return max(100, min(3000, estimate)), len(player_rows), average_loss
 
 
 def material(board, color):
@@ -998,8 +1007,8 @@ class PGNReviewer:
         ttk.Label(
             summary_panel,
             text=(
-                "The match-performance estimate currently uses PGN ratings "
-                "and results; it is not an estimate from move quality."
+                "Game-strength estimates use Stockfish move quality and are "
+                "approximate, not Chess.com's proprietary formula."
             ),
             foreground="#777777"
         ).pack(anchor="w", pady=4)
@@ -1344,6 +1353,7 @@ class PGNReviewer:
 
                     # Evaluate the best alternative position.
                     best_expected = after_expected
+                    best_score = after_score
 
                     if best_move:
                         best_board = board.copy()
@@ -1351,9 +1361,7 @@ class PGNReviewer:
 
                         best_info = engine.analyse(
                             best_board,
-                            chess.engine.Limit(
-                                depth=max(8, depth - 2)
-                            )
+                            chess.engine.Limit(depth=depth)
                         )
 
                         best_score = score_cp(
@@ -1456,6 +1464,8 @@ class PGNReviewer:
                             else 1.0 - after_expected
                         ),
                         "best_expected": best_expected,
+                        "quality_loss": max(0.0, best_expected - after_expected),
+                        "forced": forced,
                     })
 
                     counts[label] = (
@@ -1476,11 +1486,11 @@ class PGNReviewer:
             engine.quit()
             engine = None
 
-            white_performance, white_games = calculate_performance_rating(
-                games, chess.WHITE
+            white_performance, white_games, white_loss = calculate_game_strength(
+                rows, "White"
             )
-            black_performance, black_games = calculate_performance_rating(
-                games, chess.BLACK
+            black_performance, black_games, black_loss = calculate_game_strength(
+                rows, "Black"
             )
 
             self.root.after(
@@ -1492,7 +1502,9 @@ class PGNReviewer:
                 white_performance,
                 white_games,
                 black_performance,
-                black_games
+                black_games,
+                white_loss,
+                black_loss
             )
 
         except Exception as e:
@@ -1540,7 +1552,9 @@ class PGNReviewer:
         white_performance=None,
         white_games=0,
         black_performance=None,
-        black_games=0
+        black_games=0,
+        white_loss=None,
+        black_loss=None
     ):
 
         self.rows = rows
@@ -1594,17 +1608,20 @@ class PGNReviewer:
             + summary
         )
 
-        if white_performance is not None and black_performance is not None:
-            self.performance_summary.set(
-                f"Estimated match performance — "
-                f"White: {white_performance} Elo ({white_games} rated game(s))"
-                f"  |  Black: {black_performance} Elo ({black_games} rated game(s))"
-            )
-        else:
-            self.performance_summary.set(
-                "Estimated match Elo unavailable — PGN needs player ratings "
-                "and a completed result (1-0, 0-1, or 1/2-1/2)."
-            )
+        white_text = (
+            f"White: ~{white_performance} Elo"
+            if white_performance is not None else "White: not enough moves"
+        )
+        black_text = (
+            f"Black: ~{black_performance} Elo"
+            if black_performance is not None else "Black: not enough moves"
+        )
+        white_detail = f" (avg EP loss {white_loss:.3f})" if white_loss is not None else ""
+        black_detail = f" (avg EP loss {black_loss:.3f})" if black_loss is not None else ""
+        self.performance_summary.set(
+            f"Estimated game strength — {white_text}{white_detail}  |  "
+            f"{black_text}{black_detail}"
+        )
 
         self.status.set("Review complete.")
 
@@ -1618,7 +1635,9 @@ class PGNReviewer:
             white_performance,
             white_games,
             black_performance,
-            black_games
+            black_games,
+            white_loss,
+            black_loss
         )
 
         if rows:
@@ -1761,7 +1780,9 @@ class PGNReviewer:
             white_performance,
             white_games,
             black_performance,
-            black_games
+            black_games,
+            white_loss,
+            black_loss
         ) = self.last_report
 
         with open(
@@ -1781,20 +1802,11 @@ class PGNReviewer:
                 "Chess.com-style expected-points approximation\n"
             )
 
-            if white_performance is not None and black_performance is not None:
-                f.write(
-                    f"Estimated match performance — White: {white_performance} Elo "
-                    f"({white_games} rated game(s)); Black: {black_performance} Elo "
-                    f"({black_games} rated game(s)).\n"
-                )
-            else:
-                f.write(
-                    "Estimated match performance Elo unavailable: PGN player "
-                    "ratings and a completed result are required.\n"
-                )
             f.write(
-                "This is a result-based estimate, not an engine-derived "
-                "playing-strength rating.\n\n"
+                f"Estimated game strength — White: {white_performance} Elo; "
+                f"Black: {black_performance} Elo.\n"
+                "This is a rough engine-based estimate, not Chess.com's "
+                "proprietary Game Rating formula.\n\n"
             )
 
             for row in rows:
