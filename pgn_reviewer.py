@@ -162,60 +162,66 @@ def get_rating(game, header, fallback=DEFAULT_RATING):
     return fallback
 
 
-def calculate_game_strength(rows, player):
+def calculate_game_strengths(rows):
     """
-    Estimate the strength demonstrated in this game from engine move quality.
-    This deliberately does not use the result or opponent rating.
+    Experimental head-to-head performance estimate.
 
-    The EP-loss bands are a rough local calibration, not Chess.com's formula.
-    We blend the engine-derived band with the player's PGN rating so one game
-    does not completely overwrite their established rating.
+    PGN Elo headers provide the starting-rating baseline. Stockfish's
+    expected-points loss measures how cleanly each player handled their
+    moves. The relative quality difference shifts the two estimates around
+    the average starting rating.
+
+    This is deliberately labeled an estimate: Chess.com has not published
+    the calibration needed to reproduce its Game Rating exactly.
     """
-    player_rows = [
-        row for row in rows
-        if row.get("player") == player and not row.get("forced", False)
-    ]
-    if len(player_rows) < 8:
-        return None, len(player_rows), None
+    player_data = {}
 
-    average_loss = sum(
-        row.get("quality_loss", 0.0) for row in player_rows
-    ) / len(player_rows)
+    for player in ("White", "Black"):
+        player_rows = [
+            row for row in rows
+            if row.get("player") == player and not row.get("forced", False)
+        ]
+        if len(player_rows) < 8:
+            return None, len(player_rows), None, None, 0, None, None
 
-    # Approximate game-strength bands from average expected-points lost
-    # against Stockfish's top move. EP loss is position-dependent, so these
-    # bands are intentionally broad rather than claiming exact Elo precision.
-    if average_loss <= 0.003:
-        engine_band = 2300
-    elif average_loss <= 0.008:
-        engine_band = 2100
-    elif average_loss <= 0.015:
-        engine_band = 1900
-    elif average_loss <= 0.025:
-        engine_band = 1750
-    elif average_loss <= 0.040:
-        engine_band = 1600
-    elif average_loss <= 0.060:
-        engine_band = 1450
-    elif average_loss <= 0.085:
-        engine_band = 1300
-    elif average_loss <= 0.115:
-        engine_band = 1150
-    elif average_loss <= 0.155:
-        engine_band = 1000
-    elif average_loss <= 0.210:
-        engine_band = 850
-    else:
-        engine_band = 700
+        losses = [
+            max(0.0, float(row.get("quality_loss", 0.0)))
+            for row in player_rows
+        ]
+        average_loss = sum(losses) / len(losses)
+        ratings = [
+            row.get("rating") for row in player_rows
+            if isinstance(row.get("rating"), int)
+            and 100 <= row["rating"] <= 4000
+        ]
+        player_data[player] = {
+            "count": len(player_rows),
+            "loss": average_loss,
+            "rating": round(sum(ratings) / len(ratings)) if ratings else DEFAULT_RATING,
+        }
 
-    # Use the player's rating as a stabilizing prior, not as the result.
-    ratings = [
-        row.get("rating") for row in player_rows
-        if isinstance(row.get("rating"), int) and 100 <= row["rating"] <= 4000
-    ]
-    base_rating = round(sum(ratings) / len(ratings)) if ratings else 1200
-    estimate = round(0.75 * engine_band + 0.25 * base_rating)
-    return max(100, min(3000, estimate)), len(player_rows), average_loss
+    white = player_data["White"]
+    black = player_data["Black"]
+
+    # Convert average EP loss into a smooth quality index. Comparing the
+    # two players reduces (but does not eliminate) position-specific noise.
+    white_quality = 1.0 / (1.0 + 10.0 * white["loss"])
+    black_quality = 1.0 / (1.0 + 10.0 * black["loss"])
+
+    quality_gap = 400.0 * math.log10(
+        max(0.01, white_quality) / max(0.01, black_quality)
+    )
+    quality_gap = max(-300.0, min(300.0, quality_gap))
+
+    # Center the estimates on both players' supplied starting ratings.
+    baseline = (white["rating"] + black["rating"]) / 2.0
+    white_estimate = round(max(100, min(3000, baseline + quality_gap / 2.0)))
+    black_estimate = round(max(100, min(3000, baseline - quality_gap / 2.0)))
+
+    return (
+        white_estimate, white["count"], black_estimate,
+        black["count"], white["loss"], black["loss"]
+    )
 
 
 def material(board, color):
@@ -1486,12 +1492,14 @@ class PGNReviewer:
             engine.quit()
             engine = None
 
-            white_performance, white_games, white_loss = calculate_game_strength(
-                rows, "White"
-            )
-            black_performance, black_games, black_loss = calculate_game_strength(
-                rows, "Black"
-            )
+            (
+                white_performance,
+                white_games,
+                black_performance,
+                black_games,
+                white_loss,
+                black_loss
+            ) = calculate_game_strengths(rows)
 
             self.root.after(
                 0,
@@ -1619,7 +1627,7 @@ class PGNReviewer:
         white_detail = f" (avg EP loss {white_loss:.3f})" if white_loss is not None else ""
         black_detail = f" (avg EP loss {black_loss:.3f})" if black_loss is not None else ""
         self.performance_summary.set(
-            f"Estimated game strength — {white_text}{white_detail}  |  "
+            f"Estimated performance (experimental) — {white_text}{white_detail}  |  "
             f"{black_text}{black_detail}"
         )
 
